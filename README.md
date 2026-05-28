@@ -105,16 +105,23 @@ Run:
 python3 check_slots.py
 ```
 
+To test Telegram notifications without waiting for a real slot change:
+
+```bash
+python3 check_slots.py --test-notification
+```
+
 Expected behavior:
 
 - If no slots are available, it exits successfully and prints JSON like:
 
 ```json
-{"slotCount": 0, "notified": false}
+{"checkedAt": "2026-05-28T12:34:56+02:00", "slotCount": 0, "notified": false}
 ```
 
 - If slots are available and they are new, it sends a Telegram message.
 - If the same slots are still available on the next run, it will not send the same alert again.
+- With `--test-notification`, it sends a test Telegram message immediately and exits.
 
 The local state is stored in `.state/availability_state.json`.
 
@@ -159,6 +166,8 @@ tail -f /var/log/syslog
 ```
 
 On some distros cron logs go to a different file or to `journalctl`.
+
+Each cron log line now includes `checkedAt`, so you can see the date and time of each run directly in the JSON output.
 
 ## How duplicate alerts are avoided
 

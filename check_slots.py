@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import hashlib
 import json
 import os
@@ -246,6 +247,10 @@ def fingerprint_slots(slots: List[Dict[str, Any]]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def current_timestamp() -> str:
+    return datetime.now().astimezone().replace(microsecond=0).isoformat()
+
+
 def format_message(slots: List[Dict[str, Any]], request_payload: Dict[str, Any]) -> str:
     lines = [
         "New Motorizzazione Verona slots detected.",
@@ -290,10 +295,34 @@ def validate_telegram_config() -> Tuple[str, str]:
     return token, chat_id
 
 
-def main() -> int:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Check Motorizzazione Verona slots and send Telegram notifications."
+    )
+    parser.add_argument(
+        "--test-notification",
+        action="store_true",
+        help="Send a test Telegram notification and exit.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
     load_env_file(Path(__file__).with_name(".env"))
+    args = parse_args(argv)
+    checked_at = current_timestamp()
 
     try:
+        if args.test_notification:
+            telegram_token, telegram_chat_id = validate_telegram_config()
+            send_telegram_message(
+                telegram_token,
+                telegram_chat_id,
+                f"Test notification from MotorizzazioneChecker at {checked_at}.",
+            )
+            print(json.dumps({"checkedAt": checked_at, "notified": True, "notificationTest": True}))
+            return 0
+
         booking_url = os.getenv("BOOKING_URL", DEFAULT_BOOKING_URL)
         request_payload = build_payload()
         response_json = post_json(
@@ -331,7 +360,15 @@ def main() -> int:
             },
         )
 
-        print(json.dumps({"slotCount": len(slots), "notified": bool(slots and current_fingerprint != previous_fingerprint)}))
+        print(
+            json.dumps(
+                {
+                    "checkedAt": checked_at,
+                    "slotCount": len(slots),
+                    "notified": bool(slots and current_fingerprint != previous_fingerprint),
+                }
+            )
+        )
         return 0
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
