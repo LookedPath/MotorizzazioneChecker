@@ -256,7 +256,7 @@ def scalar_type_name(value: Any) -> str:
         return "null"
     if isinstance(value, bool):
         return "boolean"
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, int):
         return "integer"
     if isinstance(value, float):
         return "number"
@@ -319,7 +319,10 @@ def format_message(
         lines.extend(
             [
                 "API response model changed.",
-                f"Previous model fingerprint: {previous_model_fingerprint or 'n/a'}",
+                (
+                    "Previous model fingerprint: "
+                    f"{previous_model_fingerprint if previous_model_fingerprint is not None else 'n/a'}"
+                ),
                 f"Current model fingerprint: {current_model_fingerprint}",
                 f"Current model: {summarize_model(current_model)}",
                 "",
