@@ -27,7 +27,7 @@ It is designed to run from `cron` every minute on a Linux machine.
   - `bookings.cloud.microsoft`
   - `api.telegram.org`
 - A Telegram bot token
-- One Telegram chat ID, or multiple chat IDs separated by commas
+- One Telegram chat ID, or multiple chat IDs separated by commas in the same variable
 
 ## 1. Download the project
 
@@ -78,13 +78,11 @@ TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
 ```
 
-If you want to notify multiple chats, use:
+If you want to notify multiple chats, keep the same variable name and separate IDs with commas:
 
 ```dotenv
-TELEGRAM_CHAT_IDS=first_chat_id,second_chat_id
+TELEGRAM_CHAT_ID=first_chat_id,second_chat_id
 ```
-
-You can keep `TELEGRAM_CHAT_ID` for a single recipient, or use both variables together.
 
 Optional settings:
 

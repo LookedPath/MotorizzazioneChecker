@@ -396,16 +396,12 @@ def unique_strings(values: List[str]) -> List[str]:
 
 def validate_telegram_config() -> Tuple[str, List[str]]:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_ids = env_list("TELEGRAM_CHAT_IDS", [])
-    single_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    chat_ids = env_list("TELEGRAM_CHAT_ID", [])
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN is required")
-    if single_chat_id:
-        chat_ids.append(single_chat_id)
-
     chat_ids = unique_strings(chat_ids)
     if not chat_ids:
-        raise ValueError("TELEGRAM_CHAT_ID or TELEGRAM_CHAT_IDS is required")
+        raise ValueError("TELEGRAM_CHAT_ID is required")
     return token, chat_ids
 
 
