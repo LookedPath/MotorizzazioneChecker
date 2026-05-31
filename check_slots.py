@@ -23,6 +23,10 @@ DEFAULT_TIME_ZONE = "W. Europe Standard Time"
 DEFAULT_START_DAYS_FROM_NOW = 0
 DEFAULT_END_DAYS_FROM_NOW = 33
 DEFAULT_STATE_FILE = ".state/availability_state.json"
+DEFAULT_BOOKING_LINK = (
+    "https://www.dgtne.it/uffici-motorizzazione-civile/veneto/"
+    "ufficio-motorizzazione-civile-verona/prenotazione/"
+)
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
@@ -247,13 +251,92 @@ def fingerprint_slots(slots: List[Dict[str, Any]]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def scalar_type_name(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
+
+def infer_json_model(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {str(key): infer_json_model(value) for key, value in sorted(node.items(), key=lambda item: str(item[0]))}
+    if isinstance(node, list):
+        item_models = []
+        seen = set()
+        for item in node:
+            model = infer_json_model(item)
+            encoded = json.dumps(model, separators=(",", ":"), sort_keys=True)
+            if encoded in seen:
+                continue
+            seen.add(encoded)
+            item_models.append(json.loads(encoded))
+
+        item_models.sort(key=lambda item: json.dumps(item, separators=(",", ":"), sort_keys=True))
+        return item_models
+    return scalar_type_name(node)
+
+
+def fingerprint_response_model(data: Dict[str, Any]) -> Tuple[str, Any]:
+    model = infer_json_model(data)
+    encoded = json.dumps(model, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest(), model
+
+
 def current_timestamp() -> str:
     return datetime.now().astimezone().replace(microsecond=0).isoformat()
 
 
-def format_message(slots: List[Dict[str, Any]], request_payload: Dict[str, Any]) -> str:
+def summarize_model(model: Any, max_length: int = 600) -> str:
+    summary = json.dumps(model, sort_keys=True, separators=(",", ":"))
+    if len(summary) <= max_length:
+        return summary
+    return f"{summary[: max_length - 3]}..."
+
+
+def format_message(
+    slots: List[Dict[str, Any]],
+    request_payload: Dict[str, Any],
+    model_changed: bool,
+    previous_model_fingerprint: Optional[str],
+    current_model_fingerprint: str,
+    current_model: Any,
+) -> str:
     lines = [
-        "New Motorizzazione Verona slots detected.",
+        "Motorizzazione Verona update detected.",
+        "",
+    ]
+
+    if model_changed:
+        lines.extend(
+            [
+                "API response model changed.",
+                f"Previous model fingerprint: {previous_model_fingerprint or 'n/a'}",
+                f"Current model fingerprint: {current_model_fingerprint}",
+                f"Current model: {summarize_model(current_model)}",
+                "",
+            ]
+        )
+
+    if slots:
+        lines.extend(
+            [
+                "Bookable slots detected.",
+                "",
+            ]
+        )
+    else:
+        lines.append("No bookable slots extracted from the current response.")
+
+    lines.extend(
+        [
         f"Service ID: {request_payload['serviceId']}",
         (
             "Window: "
@@ -261,8 +344,14 @@ def format_message(slots: List[Dict[str, Any]], request_payload: Dict[str, Any])
             f"{request_payload['endDateTime']['dateTime']}"
         ),
         "",
-        "Available slots:",
+        f"Booking link: {DEFAULT_BOOKING_LINK}",
     ]
+    )
+
+    if not slots:
+        return "\n".join(lines)
+
+    lines.extend(["", "Available slots:"])
 
     for slot in slots[:20]:
         lines.append(f"- {slot['start']} -> {slot['end']}")
@@ -285,14 +374,35 @@ def send_telegram_message(token: str, chat_id: str, text: str) -> None:
         response.read()
 
 
-def validate_telegram_config() -> Tuple[str, str]:
+def send_telegram_messages(token: str, chat_ids: List[str], text: str) -> None:
+    for chat_id in chat_ids:
+        send_telegram_message(token, chat_id, text)
+
+
+def unique_strings(values: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def validate_telegram_config() -> Tuple[str, List[str]]:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    chat_ids = env_list("TELEGRAM_CHAT_IDS", [])
+    single_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN is required")
-    if not chat_id:
-        raise ValueError("TELEGRAM_CHAT_ID is required")
-    return token, chat_id
+    if single_chat_id:
+        chat_ids.append(single_chat_id)
+
+    chat_ids = unique_strings(chat_ids)
+    if not chat_ids:
+        raise ValueError("TELEGRAM_CHAT_ID or TELEGRAM_CHAT_IDS is required")
+    return token, chat_ids
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -314,11 +424,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         if args.test_notification:
-            telegram_token, telegram_chat_id = validate_telegram_config()
-            send_telegram_message(
+            telegram_token, telegram_chat_ids = validate_telegram_config()
+            send_telegram_messages(
                 telegram_token,
-                telegram_chat_id,
-                f"Test notification from MotorizzazioneChecker at {checked_at}.",
+                telegram_chat_ids,
+                (
+                    "Test notification from MotorizzazioneChecker "
+                    f"at {checked_at}.\n\nBooking link: {DEFAULT_BOOKING_LINK}"
+                ),
             )
             print(json.dumps({"checkedAt": checked_at, "notified": True, "notificationTest": True}))
             return 0
@@ -338,16 +451,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         slots = extract_slots(response_json)
         current_fingerprint = fingerprint_slots(slots)
+        current_model_fingerprint, current_model = fingerprint_response_model(response_json)
         state_path = state_file_path()
         state = load_state(state_path)
         previous_fingerprint = state.get("fingerprint")
+        previous_model_fingerprint = state.get("responseModelFingerprint")
+        model_changed = bool(
+            previous_model_fingerprint and current_model_fingerprint != previous_model_fingerprint
+        )
+        slot_changed = bool(slots and current_fingerprint != previous_fingerprint)
 
-        if slots and current_fingerprint != previous_fingerprint:
-            telegram_token, telegram_chat_id = validate_telegram_config()
-            send_telegram_message(
+        if model_changed or slot_changed:
+            telegram_token, telegram_chat_ids = validate_telegram_config()
+            send_telegram_messages(
                 telegram_token,
-                telegram_chat_id,
-                format_message(slots, request_payload),
+                telegram_chat_ids,
+                format_message(
+                    slots,
+                    request_payload,
+                    model_changed,
+                    previous_model_fingerprint,
+                    current_model_fingerprint,
+                    current_model,
+                ),
             )
 
         save_state(
@@ -355,6 +481,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             {
                 "checkedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
                 "fingerprint": current_fingerprint,
+                "responseModelFingerprint": current_model_fingerprint,
+                "responseModel": current_model,
                 "slotCount": len(slots),
                 "slots": [{"start": slot["start"], "end": slot["end"]} for slot in slots],
             },
@@ -364,8 +492,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             json.dumps(
                 {
                     "checkedAt": checked_at,
+                    "modelChanged": model_changed,
+                    "responseModelFingerprint": current_model_fingerprint,
                     "slotCount": len(slots),
-                    "notified": bool(slots and current_fingerprint != previous_fingerprint),
+                    "notified": bool(model_changed or slot_changed),
                 }
             )
         )
