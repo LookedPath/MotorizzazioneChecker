@@ -267,7 +267,8 @@ def scalar_type_name(value: Any) -> str:
 
 def infer_json_model(node: Any) -> Any:
     if isinstance(node, dict):
-        return {str(key): infer_json_model(value) for key, value in sorted(node.items(), key=lambda item: str(item[0]))}
+        sorted_items = sorted(node.items(), key=lambda item: str(item[0]))
+        return {str(key): infer_json_model(value) for key, value in sorted_items}
     if isinstance(node, list):
         item_models = []
         seen = set()
@@ -277,10 +278,10 @@ def infer_json_model(node: Any) -> Any:
             if encoded in seen:
                 continue
             seen.add(encoded)
-            item_models.append(json.loads(encoded))
+            item_models.append((encoded, model))
 
-        item_models.sort(key=lambda item: json.dumps(item, separators=(",", ":"), sort_keys=True))
-        return item_models
+        item_models.sort(key=lambda item: item[0])
+        return [item for _, item in item_models]
     return scalar_type_name(node)
 
 
@@ -337,15 +338,15 @@ def format_message(
 
     lines.extend(
         [
-        f"Service ID: {request_payload['serviceId']}",
-        (
-            "Window: "
-            f"{request_payload['startDateTime']['dateTime']} -> "
-            f"{request_payload['endDateTime']['dateTime']}"
-        ),
-        "",
-        f"Booking link: {DEFAULT_BOOKING_LINK}",
-    ]
+            f"Service ID: {request_payload['serviceId']}",
+            (
+                "Window: "
+                f"{request_payload['startDateTime']['dateTime']} -> "
+                f"{request_payload['endDateTime']['dateTime']}"
+            ),
+            "",
+            f"Booking link: {DEFAULT_BOOKING_LINK}",
+        ]
     )
 
     if not slots:
@@ -456,10 +457,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         state = load_state(state_path)
         previous_fingerprint = state.get("fingerprint")
         previous_model_fingerprint = state.get("responseModelFingerprint")
-        model_changed = bool(
-            previous_model_fingerprint and current_model_fingerprint != previous_model_fingerprint
+        model_changed = (
+            previous_model_fingerprint is not None
+            and current_model_fingerprint != previous_model_fingerprint
         )
-        slot_changed = bool(slots and current_fingerprint != previous_fingerprint)
+        slot_changed = bool(slots) and current_fingerprint != previous_fingerprint
 
         if model_changed or slot_changed:
             telegram_token, telegram_chat_ids = validate_telegram_config()
