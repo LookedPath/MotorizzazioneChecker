@@ -8,7 +8,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,8 +20,6 @@ DEFAULT_BOOKING_URL = (
 DEFAULT_SERVICE_ID = "bf3d1cb6-95d3-4996-a1f7-3d9ba808c594"
 DEFAULT_STAFF_IDS = ["ee78c5a6-5146-43a1-b8ac-3508836445f2"]
 DEFAULT_TIME_ZONE = "W. Europe Standard Time"
-DEFAULT_START_DAYS_FROM_NOW = 0
-DEFAULT_END_DAYS_FROM_NOW = 90
 DEFAULT_STATE_FILE = ".state/availability_state.json"
 DEFAULT_BOOKING_LINK = (
     "https://www.dgtne.it/uffici-motorizzazione-civile/veneto/"
@@ -55,16 +53,6 @@ def load_env_file(env_path: Path) -> None:
         os.environ[key] = value
 
 
-def env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be an integer") from exc
-
-
 def env_list(name: str, default: List[str]) -> List[str]:
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -72,12 +60,15 @@ def env_list(name: str, default: List[str]) -> List[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def add_months(dt: datetime, months: int) -> datetime:
+    month_index = dt.month - 1 + months
+    return datetime(dt.year + month_index // 12, month_index % 12 + 1, 1)
+
+
 def build_payload() -> Dict[str, Any]:
     now = datetime.now()
-    start_days = env_int("START_DAYS_FROM_NOW", DEFAULT_START_DAYS_FROM_NOW)
-    end_days = env_int("END_DAYS_FROM_NOW", DEFAULT_END_DAYS_FROM_NOW)
-    start_dt = datetime(now.year, now.month, now.day) + timedelta(days=start_days)
-    end_dt = datetime(now.year, now.month, now.day) + timedelta(days=end_days)
+    start_dt = datetime(now.year, now.month, 1)
+    end_dt = add_months(start_dt, 3)
     time_zone = os.getenv("REQUEST_TIME_ZONE", DEFAULT_TIME_ZONE)
 
     return {
@@ -302,9 +293,25 @@ def summarize_model(model: Any, max_length: int = 600) -> str:
     return f"{summary[: max_length - 3]}..."
 
 
+def format_slot_day(value: str) -> str:
+    date_text = value.split("T", 1)[0]
+    try:
+        day = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return date_text
+    return f"{day.strftime('%A')} {day.day} {day.strftime('%B')} {day.year}"
+
+
+def summarize_slot_days(slots: List[Dict[str, Any]]) -> List[Tuple[str, int]]:
+    counts: Dict[str, int] = {}
+    for slot in slots:
+        date_text = str(slot["start"]).split("T", 1)[0]
+        counts[date_text] = counts.get(date_text, 0) + 1
+    return [(date_text, counts[date_text]) for date_text in sorted(counts)]
+
+
 def format_message(
     slots: List[Dict[str, Any]],
-    request_payload: Dict[str, Any],
     model_changed: bool,
     previous_model_fingerprint: Optional[str],
     current_model_fingerprint: str,
@@ -341,13 +348,6 @@ def format_message(
 
     lines.extend(
         [
-            f"Service ID: {request_payload['serviceId']}",
-            (
-                "Window: "
-                f"{request_payload['startDateTime']['dateTime']} -> "
-                f"{request_payload['endDateTime']['dateTime']}"
-            ),
-            "",
             f"Booking link: {DEFAULT_BOOKING_LINK}",
         ]
     )
@@ -355,13 +355,11 @@ def format_message(
     if not slots:
         return "\n".join(lines)
 
-    lines.extend(["", "Available slots:"])
+    lines.extend(["", "Available days:"])
 
-    for slot in slots[:20]:
-        lines.append(f"- {slot['start']} -> {slot['end']}")
-
-    if len(slots) > 20:
-        lines.append(f"- ... and {len(slots) - 20} more")
+    for date_text, count in summarize_slot_days(slots):
+        suffix = "slot" if count == 1 else "slots"
+        lines.append(f"- {format_slot_day(date_text)}: {count} {suffix}")
 
     return "\n".join(lines)
 
@@ -470,7 +468,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 telegram_chat_ids,
                 format_message(
                     slots,
-                    request_payload,
                     model_changed,
                     previous_model_fingerprint,
                     current_model_fingerprint,

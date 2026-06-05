@@ -94,10 +94,6 @@ BOOKING_URL=https://bookings.cloud.microsoft/BookingsService/api/V1/bookingBusin
 SERVICE_ID=bf3d1cb6-95d3-4996-a1f7-3d9ba808c594
 STAFF_IDS=ee78c5a6-5146-43a1-b8ac-3508836445f2
 
-# Date window relative to today
-START_DAYS_FROM_NOW=0
-END_DAYS_FROM_NOW=90
-
 # Microsoft time zone name used by the request
 REQUEST_TIME_ZONE=W. Europe Standard Time
 
@@ -124,7 +120,7 @@ Expected behavior:
 - If no slots are available, it exits successfully and prints JSON like:
 
 ```json
-{"checkedAt": "2026-05-28T12:34:56+02:00", "windowStart": "2026-05-28T00:00:00", "windowEnd": "2026-08-26T00:00:00", "modelChanged": false, "responseModelFingerprint": "...", "slotCount": 0, "notified": false}
+{"checkedAt": "2026-05-28T12:34:56+02:00", "windowStart": "2026-05-01T00:00:00", "windowEnd": "2026-08-01T00:00:00", "modelChanged": false, "responseModelFingerprint": "...", "slotCount": 0, "notified": false}
 ```
 
 - If slots are available and the previous run had zero slots, it sends a Telegram message.
@@ -177,6 +173,8 @@ tail -f /var/log/syslog
 On some distros cron logs go to a different file or to `journalctl`.
 
 Each cron log line now includes `checkedAt`, so you can see the date and time of each run directly in the JSON output.
+
+The booking request always checks whole calendar months: the current month plus the next two full months. For example, any run in May checks from May 1 through August 1, covering all of May, June, and July.
 
 ## How duplicate alerts are avoided
 
