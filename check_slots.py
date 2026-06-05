@@ -21,7 +21,7 @@ DEFAULT_SERVICE_ID = "bf3d1cb6-95d3-4996-a1f7-3d9ba808c594"
 DEFAULT_STAFF_IDS = ["ee78c5a6-5146-43a1-b8ac-3508836445f2"]
 DEFAULT_TIME_ZONE = "W. Europe Standard Time"
 DEFAULT_START_DAYS_FROM_NOW = 0
-DEFAULT_END_DAYS_FROM_NOW = 33
+DEFAULT_END_DAYS_FROM_NOW = 90
 DEFAULT_STATE_FILE = ".state/availability_state.json"
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -340,9 +340,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         current_fingerprint = fingerprint_slots(slots)
         state_path = state_file_path()
         state = load_state(state_path)
-        previous_fingerprint = state.get("fingerprint")
+        previous_slot_count = int(state.get("slotCount") or 0)
+        should_notify = bool(slots and previous_slot_count == 0)
 
-        if slots and current_fingerprint != previous_fingerprint:
+        if should_notify:
             telegram_token, telegram_chat_id = validate_telegram_config()
             send_telegram_message(
                 telegram_token,
@@ -364,8 +365,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             json.dumps(
                 {
                     "checkedAt": checked_at,
+                    "windowStart": request_payload["startDateTime"]["dateTime"],
+                    "windowEnd": request_payload["endDateTime"]["dateTime"],
                     "slotCount": len(slots),
-                    "notified": bool(slots and current_fingerprint != previous_fingerprint),
+                    "notified": should_notify,
                 }
             )
         )

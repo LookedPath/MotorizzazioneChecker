@@ -9,7 +9,7 @@ It is designed to run from `cron` every minute on a Linux machine.
 - No third-party Python packages
 - Reads Telegram credentials from `.env`
 - Ignores `.env` in git
-- Stores the last seen availability fingerprint in `.state/` so cron does not spam Telegram every minute
+- Stores the last seen slot count in `.state/` so cron does not spam Telegram every minute
 - Lets you override the request window and endpoint via environment variables
 
 ## Repository contents
@@ -88,7 +88,7 @@ STAFF_IDS=ee78c5a6-5146-43a1-b8ac-3508836445f2
 
 # Date window relative to today
 START_DAYS_FROM_NOW=0
-END_DAYS_FROM_NOW=33
+END_DAYS_FROM_NOW=90
 
 # Microsoft time zone name used by the request
 REQUEST_TIME_ZONE=W. Europe Standard Time
@@ -116,11 +116,11 @@ Expected behavior:
 - If no slots are available, it exits successfully and prints JSON like:
 
 ```json
-{"checkedAt": "2026-05-28T12:34:56+02:00", "slotCount": 0, "notified": false}
+{"checkedAt": "2026-05-28T12:34:56+02:00", "windowStart": "2026-05-28T00:00:00", "windowEnd": "2026-08-26T00:00:00", "slotCount": 0, "notified": false}
 ```
 
-- If slots are available and they are new, it sends a Telegram message.
-- If the same slots are still available on the next run, it will not send the same alert again.
+- If slots are available and the previous run had zero slots, it sends a Telegram message.
+- If slots are still available on the next run, it will not send another alert.
 - With `--test-notification`, it sends a test Telegram message immediately and exits.
 
 The local state is stored in `.state/availability_state.json`.
@@ -171,13 +171,14 @@ Each cron log line now includes `checkedAt`, so you can see the date and time of
 
 ## How duplicate alerts are avoided
 
-Each run extracts the currently available slots from the Microsoft Bookings response and computes a fingerprint.
+Each run extracts the currently available slots from the Microsoft Bookings response and stores the latest slot count.
 
 - If there are no slots, no Telegram message is sent.
-- If slots exist and the fingerprint changed since the last run, a Telegram message is sent.
-- If the fingerprint is unchanged, the script stays silent.
+- If slots exist and the previous run had zero slots, a Telegram message is sent.
+- If slots remain available, the script stays silent even if the exact times change.
+- Once the count goes back to zero, the next nonzero availability will trigger a new alert.
 
-If you want to force a new alert for the same slots, delete the state file:
+If you want to force a new alert while slots are still available, delete the state file:
 
 ```bash
 rm -f .state/availability_state.json
